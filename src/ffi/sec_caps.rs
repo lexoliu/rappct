@@ -29,7 +29,11 @@ impl OwnedSecurityCapabilities {
         let caps = caps_vec.into_boxed_slice();
         let sc = SECURITY_CAPABILITIES {
             AppContainerSid: app_sid.as_psid(),
-            Capabilities: caps.as_ptr() as *mut _,
+            Capabilities: if caps.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                caps.as_ptr().cast_mut()
+            },
             CapabilityCount: caps.len() as u32,
             Reserved: 0,
         };
@@ -137,6 +141,27 @@ mod tests {
                 let is_valid = IsValidSid(entry.Sid).as_bool();
                 assert!(is_valid, "capability SID {idx} failed IsValidSid");
             }
+        }
+    }
+
+    #[test]
+    fn empty_capability_list_uses_a_null_array() {
+        // SAFETY: SDDL strings are valid; resulting PSIDs are converted into owned SIDs.
+        unsafe {
+            let s_app = crate::ffi::wstr::WideString::from_str("S-1-15-2-1");
+            let mut app_sid = windows::Win32::Security::PSID::default();
+            ConvertStringSidToSidW(PCWSTR(s_app.as_pcwstr().0), &mut app_sid).unwrap();
+            let app_owned = OwnedSid::from_localfree_psid(app_sid.0).expect("owned app SID");
+
+            let sc = OwnedSecurityCapabilities::from_catalog(app_owned, &[]).expect("from_catalog");
+            let ptr = sc.as_ptr();
+            assert!(!ptr.is_null());
+            let sc_ref = &*ptr;
+            assert_eq!(sc_ref.CapabilityCount, 0);
+            assert!(
+                sc_ref.Capabilities.is_null(),
+                "empty capability list must pass a null array pointer"
+            );
         }
     }
 }
